@@ -3,6 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { Server } from 'socket.io';
 import { createServer } from 'http';
+import priceOracle from './services/oracle';
 
 dotenv.config();
 
@@ -45,6 +46,19 @@ app.get('/health', (req: Request, res: Response) => {
     timestamp: new Date().toISOString()
   });
 });
+
+// Price Oracle endpoint
+app.get('/api/price', (req: Request, res: Response) => {
+  const price = priceOracle.getPrice();
+  res.json({
+    asset: 'XLM',
+    price_usd: price,
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Start Oracle Polling
+priceOracle.startPolling();
 
 // Socket.IO connection handler
 io.on('connection', (socket) => {
