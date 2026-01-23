@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import { Server } from 'socket.io';
 import { createServer } from 'http';
 import authRoutes from './routes/auth.routes';
+import leaderboardRoutes from './routes/leaderboard.routes';
 import priceOracle from './services/oracle';
 
 dotenv.config();
@@ -32,6 +33,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 
 // API Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/leaderboard', leaderboardRoutes);
 
 // Hello World endpoint
 app.get('/', (req: Request, res: Response) => {
