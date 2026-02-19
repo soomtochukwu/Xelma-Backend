@@ -1,4 +1,4 @@
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, GameMode, RoundStatus } from "@prisma/client";
 import sorobanService from "./soroban.service";
 import websocketService from "./websocket.service";
 import notificationService from "./notification.service";
@@ -16,7 +16,7 @@ export class RoundService {
     durationMinutes: number,
   ): Promise<any> {
     try {
-      const gameMode = mode === "UP_DOWN" ? 0 : 1;
+      const gameMode = mode === "UP_DOWN" ? GameMode.UP_DOWN : GameMode.LEGENDS;
       const startTime = new Date();
       const endTime = new Date(
         startTime.getTime() + durationMinutes * 60 * 1000,
@@ -207,89 +207,94 @@ export class RoundService {
     }
   }
 
-    /**
-     * Gets historical rounds with pagination and aggregate stats
-     */
-    async getRoundsHistory(options: {
-        limit?: number;
-        offset?: number;
-        mode?: 'UP_DOWN' | 'LEGENDS';
-        status?: 'RESOLVED' | 'CANCELLED';
-    }): Promise<{
-        rounds: any[];
-        total: number;
-        limit: number;
-        offset: number;
-    }> {
-        try {
-            const limit = Math.min(options.limit ?? 20, 100);
-            const offset = options.offset ?? 0;
+  /**
+   * Gets historical rounds with pagination and aggregate stats
+   */
+  async getRoundsHistory(options: {
+    limit?: number;
+    offset?: number;
+    mode?: "UP_DOWN" | "LEGENDS";
+    status?: "RESOLVED" | "CANCELLED";
+  }): Promise<{
+    rounds: any[];
+    total: number;
+    limit: number;
+    offset: number;
+  }> {
+    try {
+      const limit = Math.min(options.limit ?? 20, 100);
+      const offset = options.offset ?? 0;
 
-            // Build where clause for historical rounds (RESOLVED or CANCELLED)
-            const where: any = {
-                status: {
-                    in: [RoundStatus.RESOLVED, RoundStatus.CANCELLED],
-                },
-            };
+      // Build where clause for historical rounds (RESOLVED or CANCELLED)
+      const where: any = {
+        status: {
+          in: ["RESOLVED", "CANCELLED"],
+        },
+      };
 
-            // Apply optional filters
-            if (options.mode) {
-                where.mode = options.mode === 'UP_DOWN' ? GameMode.UP_DOWN : GameMode.LEGENDS;
-            }
+      // Apply optional filters
+      if (options.mode) {
+        where.mode = options.mode;
+      }
 
-            if (options.status) {
-                where.status = options.status === 'RESOLVED' ? RoundStatus.RESOLVED : RoundStatus.CANCELLED;
-            }
+      if (options.status) {
+        where.status = options.status;
+      }
 
-            // Get total count for pagination
-            const total = await prisma.round.count({ where });
+      // Get total count for pagination
+      const total = await prisma.round.count({ where });
 
-            // Get rounds with predictions for aggregate stats
-            const rounds = await prisma.round.findMany({
-                where,
-                orderBy: {
-                    resolvedAt: 'desc',
-                },
-                skip: offset,
-                take: limit,
-                include: {
-                    predictions: {
-                        select: {
-                            amount: true,
-                            won: true,
-                        },
-                    },
-                },
-            });
+      // Get rounds with predictions for aggregate stats
+      const rounds = await prisma.round.findMany({
+        where,
+        orderBy: {
+          updatedAt: "desc",
+        },
+        skip: offset,
+        take: limit,
+        include: {
+          predictions: {
+            select: {
+              amount: true,
+              won: true,
+            },
+          },
+        },
+      });
 
-            // Transform rounds to include aggregate stats
-            const roundsWithStats = rounds.map((round: any) => {
-                const totalPredictions = round.predictions.length;
-                const totalPool = round.predictions.reduce((sum: number, p: any) => sum + p.amount, 0);
-                const winnerCount = round.predictions.filter((p: any) => p.won === true).length;
+      // Transform rounds to include aggregate stats
+      const roundsWithStats = rounds.map((round: any) => {
+        const totalPredictions = round.predictions.length;
+        const totalPool = round.predictions.reduce(
+          (sum: number, p: any) => sum + p.amount,
+          0,
+        );
+        const winnerCount = round.predictions.filter(
+          (p: any) => p.won === true,
+        ).length;
 
-                // Remove predictions array and add aggregate stats
-                const { predictions, ...roundData } = round;
+        // Remove predictions array and add aggregate stats
+        const { predictions, ...roundData } = round;
 
-                return {
-                    ...roundData,
-                    totalPredictions,
-                    totalPool: totalPool.toFixed(2),
-                    winnerCount,
-                };
-            });
+        return {
+          ...roundData,
+          totalPredictions,
+          totalPool: totalPool.toFixed(2),
+          winnerCount,
+        };
+      });
 
-            return {
-                rounds: roundsWithStats,
-                total,
-                limit,
-                offset,
-            };
-        } catch (error) {
-            logger.error('Failed to get rounds history:', error);
-            throw error;
-        }
+      return {
+        rounds: roundsWithStats,
+        total,
+        limit,
+        offset,
+      };
+    } catch (error) {
+      logger.error("Failed to get rounds history:", error);
+      throw error;
     }
+  }
 }
 
 export default new RoundService();

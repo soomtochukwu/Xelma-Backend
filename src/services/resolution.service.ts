@@ -5,7 +5,6 @@ import logger from "../utils/logger";
 import educationTipService from "./education-tip.service";
 import { prisma } from "../lib/prisma";
 
-
 interface PriceRange {
   min: number;
   max: number;
@@ -43,9 +42,9 @@ export class ResolutionService {
       }
 
       // Mode-specific resolution
-      if (round.mode === 0) {
+      if (round.mode === "UP_DOWN") {
         await this.resolveUpDownRound(round, finalPrice);
-      } else if (round.mode === 1) {
+      } else if (round.mode === "LEGENDS") {
         await this.resolveLegendsRound(round, finalPrice);
       }
 
@@ -55,7 +54,6 @@ export class ResolutionService {
         data: {
           status: "RESOLVED",
           endPrice: finalPrice,
-          resolvedAt: new Date(),
         },
       });
 
@@ -66,17 +64,10 @@ export class ResolutionService {
       try {
         const tip = await educationTipService.generateTip(roundId);
 
-        await prisma.round.update({
-          where: { id: roundId },
-          data: {
-            educationalTip: tip.message,
-            educationalTipCategory: tip.category,
-          },
-        });
-
-        logger.info("Educational tip attached to round", {
+        logger.info("Educational tip generated for round", {
           roundId,
           category: tip.category,
+          message: tip.message,
         });
       } catch (tipError) {
         logger.error("Failed to generate educational tip after resolution", {

@@ -1,4 +1,5 @@
-import { Request } from 'express';
+import { Request } from "express";
+import { UserRole } from "@prisma/client";
 
 export enum GameMode {
   UP_DOWN = 0,
@@ -6,14 +7,14 @@ export enum GameMode {
 }
 
 export enum RoundStatus {
-  ACTIVE = 'ACTIVE',
-  RESOLVED = 'RESOLVED',
-  CANCELLED = 'CANCELLED',
+  ACTIVE = "ACTIVE",
+  RESOLVED = "RESOLVED",
+  CANCELLED = "CANCELLED",
 }
 
 export enum BetSide {
-  UP = 'up',
-  DOWN = 'down',
+  UP = "up",
+  DOWN = "down",
 }
 
 export interface StartRoundRequestBody {
@@ -72,5 +73,6 @@ export interface RoundRequest extends Request {
   user?: {
     userId: string;
     walletAddress: string;
+    role: UserRole;
   };
 }

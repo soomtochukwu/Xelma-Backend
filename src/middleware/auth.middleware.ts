@@ -31,14 +31,6 @@ declare global {
   }
 }
 
-export interface AuthRequest extends Request {
-  user?: {
-    userId: string;
-    walletAddress: string;
-    role: UserRole;
-  };
-}
-
 /**
  * Middleware to authenticate user via JWT token
  */
@@ -97,8 +89,12 @@ export const authenticateUser = async (
   }
 };
 
+// Alias for backwards compatibility
+export const authenticateToken = authenticateUser;
+
 /**
- * Middleware for optional authentication (user may or may not be logged in)
+ * Middleware to optionally authenticate user via JWT token.
+ * If a Bearer token is provided and valid, attaches `req.user`; otherwise continues unauthenticated.
  */
 export const optionalAuthentication = async (
   req: Request,
@@ -109,62 +105,6 @@ export const optionalAuthentication = async (
     const authHeader = req.headers.authorization;
 
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      // No token, but that's ok for optional auth
-      (req as any).userId = undefined;
-      next();
-      return;
-    }
-
-    const token = authHeader.substring(7);
-    const decoded = verifyToken(token);
-
-    if (!decoded) {
-      (req as any).userId = undefined;
-      next();
-      return;
-    }
-
-    // Get user from database
-    const user = await prisma.user.findUnique({
-      where: { id: decoded.userId },
-      select: {
-        id: true,
-        walletAddress: true,
-        role: true,
-      },
-    });
-
-    if (user) {
-      req.user = {
-        userId: user.id,
-        walletAddress: user.walletAddress,
-        role: user.role,
-      };
-      (req as any).userId = user.id;
-    }
-
-    next();
-  } catch (error) {
-    logger.error("Optional authentication error:", error);
-    // Don't fail on error, just continue without user
-    next();
-    res.status(401).json({ error: "Authentication failed" });
-  }
-};
-
-/**
- * Middleware to optionally authenticate user via JWT token.
- * If a Bearer token is provided and valid, attaches `req.user`; otherwise continues unauthenticated.
- */
-export const optionalAuthentication = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-): Promise<void> => {
-  try {
-    const authHeader = req.headers.authorization;
-
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
       next();
       return;
     }
@@ -245,58 +185,4 @@ export const requireOracle = async (
 
     next();
   });
-};
-
-/**
- * Optional authentication middleware
- * Validates token if present, but doesn't require it
- * Middleware that attempts to authenticate but doesn't block if fails
- */
-export const optionalAuthentication = async (
-  req: Request,
-  res: Response,
-  next: NextFunction,
-): Promise<void> => {
-  try {
-    const authHeader = req.headers.authorization;
-
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      // No token provided, continue without user
-      next();
-      return;
-    }
-
-    const token = authHeader.substring(7);
-    const decoded = verifyToken(token);
-
-    if (!decoded) {
-      // Invalid token, continue without user
-      next();
-      return;
-    }
-
-    // Get user from database
-    const user = await prisma.user.findUnique({
-      where: { id: decoded.userId },
-      select: {
-        id: true,
-        walletAddress: true,
-        role: true,
-      },
-    });
-
-    if (user) {
-      req.user = {
-        userId: user.id,
-        walletAddress: user.walletAddress,
-        role: user.role,
-      };
-    }
-
-    next();
-  } catch (error) {
-    // On error, continue without user
-    logger.warn('Optional authentication error:', error);
-    next();
-  }
 };
