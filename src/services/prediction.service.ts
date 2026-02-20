@@ -64,7 +64,7 @@ export class PredictionService {
       }
 
       // Mode-specific logic
-      if (round.mode === 0) {
+      if (round.mode === "UP_DOWN") {
         if (!side) {
           throw new Error("Side (UP/DOWN) is required for UP_DOWN mode");
         }
@@ -77,9 +77,8 @@ export class PredictionService {
           data: {
             roundId,
             userId,
-            mode: 0,
             amount,
-            choice: side,
+            side,
           },
         });
 
@@ -105,7 +104,7 @@ export class PredictionService {
         );
 
         return prediction;
-      } else if (round.mode === 1) {
+      } else if (round.mode === "LEGENDS") {
         if (!priceRange) {
           throw new Error("Price range is required for LEGENDS mode");
         }
@@ -125,9 +124,8 @@ export class PredictionService {
           data: {
             roundId,
             userId,
-            mode: 1,
             amount,
-            guessPrice: priceRange.min,
+            priceRange: priceRange as any,
           },
         });
 

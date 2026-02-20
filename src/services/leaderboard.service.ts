@@ -1,5 +1,5 @@
 import { prisma } from "../lib/prisma";
-import { GameMode } from '@prisma/client';
+import { GameMode } from "@prisma/client";
 import {
   LeaderboardEntry,
   LeaderboardResponse,
@@ -29,34 +29,39 @@ export async function getLeaderboard(
   });
 
   // Format leaderboard entries
-  const leaderboard: LeaderboardEntry[] = userStats.map((stat: typeof userStats[number], index: number) => ({
-    rank: offset + index + 1,
-    userId: stat.user.id,
-    walletAddress: maskWalletAddress(stat.user.walletAddress),
-    totalEarnings: parseFloat(stat.totalEarnings.toString()),
-    totalPredictions: stat.totalPredictions,
-    accuracy: calculateAccuracy(stat.correctPredictions, stat.totalPredictions),
-    modeStats: {
-      upDown: {
-        wins: stat.upDownWins,
-        losses: stat.upDownLosses,
-        earnings: parseFloat(stat.upDownEarnings.toString()),
-        accuracy: calculateAccuracy(
-          stat.upDownWins,
-          stat.upDownWins + stat.upDownLosses,
-        ),
+  const leaderboard: LeaderboardEntry[] = userStats.map(
+    (stat: (typeof userStats)[number], index: number) => ({
+      rank: offset + index + 1,
+      userId: stat.user.id,
+      walletAddress: maskWalletAddress(stat.user.walletAddress),
+      totalEarnings: parseFloat(stat.totalEarnings.toString()),
+      totalPredictions: stat.totalPredictions,
+      accuracy: calculateAccuracy(
+        stat.correctPredictions,
+        stat.totalPredictions,
+      ),
+      modeStats: {
+        upDown: {
+          wins: stat.upDownWins,
+          losses: stat.upDownLosses,
+          earnings: parseFloat(stat.upDownEarnings.toString()),
+          accuracy: calculateAccuracy(
+            stat.upDownWins,
+            stat.upDownWins + stat.upDownLosses,
+          ),
+        },
+        legends: {
+          wins: stat.legendsWins,
+          losses: stat.legendsLosses,
+          earnings: parseFloat(stat.legendsEarnings.toString()),
+          accuracy: calculateAccuracy(
+            stat.legendsWins,
+            stat.legendsWins + stat.legendsLosses,
+          ),
+        },
       },
-      legends: {
-        wins: stat.legendsWins,
-        losses: stat.legendsLosses,
-        earnings: parseFloat(stat.legendsEarnings.toString()),
-        accuracy: calculateAccuracy(
-          stat.legendsWins,
-          stat.legendsWins + stat.legendsLosses,
-        ),
-      },
-    },
-  }));
+    }),
+  );
 
   // Get user position if authenticated
   let userPosition: LeaderboardEntry | undefined;
@@ -163,10 +168,6 @@ export async function updateUserStatsForRound(roundId: string): Promise<void> {
       ? parseFloat(prediction.amount.toString())
       : -parseFloat(prediction.amount.toString());
 
-    // Check mode from Round as Prediction doesn't have it anymore
-    const isUpDown = round.mode === "UP_DOWN";
-    const isLegends = round.mode === "LEGENDS";
-
     // Determine mode from round
     const isUpDown = round.mode === GameMode.UP_DOWN;
     const isLegends = round.mode === GameMode.LEGENDS;
@@ -209,8 +210,10 @@ function calculatePredictionResult(prediction: any, round: any): boolean {
   if (round.mode === GameMode.UP_DOWN) {
     // Up/Down mode - check if prediction side matches price movement
     const priceWentUp = round.endPrice > round.startPrice;
-    return (prediction.side === 'UP' && priceWentUp) ||
-           (prediction.side === 'DOWN' && !priceWentUp);
+    return (
+      (prediction.side === "UP" && priceWentUp) ||
+      (prediction.side === "DOWN" && !priceWentUp)
+    );
   } else {
     // Legends mode - check if price falls within predicted range
     if (!prediction.priceRange) return false;

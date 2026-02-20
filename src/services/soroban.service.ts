@@ -1,13 +1,13 @@
-import { Client, BetSide } from "@tevalabs/xelma-bindings";
+// NOTE: @tevalabs/xelma-bindings not yet installed; using local type stubs below
 import { Keypair, Networks } from "@stellar/stellar-sdk";
 import logger from "../utils/logger";
 
 // Temporary loose typing until bindings are available
-type Client = any;
+const Client: any = undefined as any;
 type BetSide = any;
 
 export class SorobanService {
-  private client: Client | null = null;
+  private client: any = null;
   private adminKeypair: Keypair | null = null;
   private oracleKeypair: Keypair | null = null;
   private initialized = false;
@@ -15,16 +15,16 @@ export class SorobanService {
   constructor() {
     try {
       const contractId = process.env.SOROBAN_CONTRACT_ID;
-      const network = process.env.SOROBAN_NETWORK || 'testnet';
+      const network = process.env.SOROBAN_NETWORK || "testnet";
       const rpcUrl =
-        process.env.SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org';
+        process.env.SOROBAN_RPC_URL || "https://soroban-testnet.stellar.org";
       const adminSecret = process.env.SOROBAN_ADMIN_SECRET;
       const oracleSecret = process.env.SOROBAN_ORACLE_SECRET;
 
       // Hard-disable if anything critical is missing
       if (!contractId || !adminSecret || !oracleSecret) {
         logger.warn(
-          'Soroban configuration or bindings missing. Soroban integration DISABLED.'
+          "Soroban configuration or bindings missing. Soroban integration DISABLED.",
         );
         return;
       }
@@ -33,7 +33,7 @@ export class SorobanService {
       this.client = new Client({
         contractId,
         networkPassphrase:
-          network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET,
+          network === "mainnet" ? Networks.PUBLIC : Networks.TESTNET,
         rpcUrl,
       });
 
@@ -41,9 +41,9 @@ export class SorobanService {
       this.oracleKeypair = Keypair.fromSecret(oracleSecret);
       this.initialized = true;
 
-      logger.info('Soroban service initialized successfully');
+      logger.info("Soroban service initialized successfully");
     } catch (error) {
-      logger.error('Failed to initialize Soroban service:', error);
+      logger.error("Failed to initialize Soroban service:", error);
       this.initialized = false;
     }
   }
