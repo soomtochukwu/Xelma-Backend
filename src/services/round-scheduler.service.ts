@@ -9,11 +9,24 @@ class RoundSchedulerService {
 
   start(): void {
     if (process.env.ROUND_SCHEDULER_ENABLED !== "true") {
-      logger.info("[Round Scheduler] Disabled (ROUND_SCHEDULER_ENABLED is not 'true')");
+      logger.info(
+        "[Round Scheduler] Disabled (ROUND_SCHEDULER_ENABLED is not 'true')",
+      );
       return;
     }
 
     logger.info("[Round Scheduler] Starting round creation and close jobs");
+
+    // Execute an initial round spawn shortly after boot to prevent 4-minute developer waits,
+    // giving the PriceOracle ample time to fetch real metrics or default to mock payloads.
+    setTimeout(() => {
+      this.createRound().catch((err) =>
+        logger.error(
+          "[Round Scheduler] Initial boot round creation failed:",
+          err,
+        ),
+      );
+    }, 15000);
 
     // Create new round every 4 minutes (1 min round + 3 min processing)
     this.cronTasks.push(
@@ -44,12 +57,16 @@ class RoundSchedulerService {
       const startPrice = priceOracle.getPrice();
 
       if (!startPrice || startPrice <= 0) {
-        logger.warn("[Round Scheduler] Skipping round creation: invalid price from oracle");
+        logger.warn(
+          "[Round Scheduler] Skipping round creation: invalid price from oracle",
+        );
         return;
       }
 
       if (priceOracle.isStale()) {
-        logger.warn("[Round Scheduler] Skipping round creation: oracle price data is stale");
+        logger.warn(
+          "[Round Scheduler] Skipping round creation: oracle price data is stale",
+        );
         return;
       }
 
@@ -101,9 +118,13 @@ class RoundSchedulerService {
         return;
       }
 
-      await roundService.autoLockExpiredRounds();
+      const stats = await roundService.autoLockExpiredRounds();
 
-      logger.info(`[Round Scheduler] Locked ${expiredCount} expired rounds`);
+      if (stats.locked > 0) {
+        logger.info(
+          `[Round Scheduler] Successfully locked ${stats.locked} experimental rounds`,
+        );
+      }
     } catch (error) {
       logger.error("[Round Scheduler] Failed to close rounds:", error);
     }

@@ -100,10 +100,19 @@ class SchedulerService {
       // Resolve each round
       for (const round of expiredRounds) {
         try {
-          await resolutionService.resolveRound(round.id, currentPrice);
-          logger.info(
-            `Auto-resolved round ${round.id} with price ${currentPrice}`,
+          const result = await resolutionService.resolveRound(
+            round.id,
+            currentPrice,
           );
+          if (result.status === "updated") {
+            logger.info(
+              `Auto-resolved round ${round.id} with price ${currentPrice}`,
+            );
+          } else if (result.status === "already_resolved") {
+            logger.debug(`Round ${round.id} was already resolved, skipping.`);
+          } else {
+            logger.warn(`Failed to resolve round ${round.id}: ${result.error}`);
+          }
         } catch (error) {
           logger.error(`Failed to auto-resolve round ${round.id}:`, error);
         }

@@ -27,7 +27,7 @@ export class RoundService {
 
       if (existingActiveRound) {
         const error: any = new Error(
-          `An active ${mode} round already exists (ID: ${existingActiveRound.id})`
+          `An active ${mode} round already exists (ID: ${existingActiveRound.id})`,
         );
         error.code = "ACTIVE_ROUND_EXISTS";
         throw error;
@@ -44,10 +44,17 @@ export class RoundService {
       if (mode === "UP_DOWN") {
         // Convert duration to ledgers (~5 seconds per ledger)
         const durationLedgers = Math.floor((durationMinutes * 60) / 5);
-        sorobanRoundId = await sorobanService.createRound(
-          startPrice,
-          durationLedgers,
-        );
+        try {
+          sorobanRoundId = await sorobanService.createRound(
+            startPrice,
+            durationLedgers,
+          );
+        } catch (err) {
+          logger.warn(
+            "Soroban round creation bypassed (Disabled or failed). Proceeding with DB-only round.",
+            err,
+          );
+        }
       }
 
       // Mode 1 (LEGENDS): Define price ranges
@@ -181,24 +188,54 @@ export class RoundService {
   /**
    * Locks a round (no more predictions allowed)
    */
-  async lockRound(roundId: string): Promise<void> {
+  async lockRound(roundId: string): Promise<{
+    status: "updated" | "already_locked" | "already_resolved" | "error";
+    error?: string;
+  }> {
     try {
+      const round = await prisma.round.findUnique({
+        where: { id: roundId },
+        select: { status: true },
+      });
+
+      if (!round) {
+        return { status: "error", error: "Round not found" };
+      }
+
+      if (round.status === "LOCKED") {
+        return { status: "already_locked" };
+      }
+
+      if (round.status === "RESOLVED") {
+        return { status: "already_resolved" };
+      }
+
       await prisma.round.update({
         where: { id: roundId },
         data: { status: "LOCKED" },
       });
 
       logger.info(`Round locked: ${roundId}`);
+      return { status: "updated" };
     } catch (error) {
       logger.error("Failed to lock round:", error);
-      throw error;
+      return {
+        status: "error",
+        error: error instanceof Error ? error.message : "Unknown error",
+      };
     }
   }
 
   /**
    * Checks if a round should be auto-locked based on time
    */
-  async autoLockExpiredRounds(): Promise<void> {
+  async autoLockExpiredRounds(): Promise<{
+    processed: number;
+    locked: number;
+    skipped: number;
+    errors: number;
+  }> {
+    const stats = { processed: 0, locked: 0, skipped: 0, errors: 0 };
     try {
       const now = new Date();
 
@@ -212,14 +249,27 @@ export class RoundService {
       });
 
       for (const round of expiredRounds) {
-        await this.lockRound(round.id);
+        stats.processed++;
+        const result = await this.lockRound(round.id);
+
+        if (result.status === "updated") stats.locked++;
+        else if (
+          result.status === "already_locked" ||
+          result.status === "already_resolved"
+        )
+          stats.skipped++;
+        else stats.errors++;
       }
 
-      if (expiredRounds.length > 0) {
-        logger.info(`Auto-locked ${expiredRounds.length} expired rounds`);
+      if (stats.processed > 0) {
+        logger.info(
+          `Auto-lock results: ${stats.locked} locked, ${stats.skipped} skipped, ${stats.errors} errors (out of ${stats.processed} expired)`,
+        );
       }
+      return stats;
     } catch (error) {
       logger.error("Failed to auto-lock expired rounds:", error);
+      return stats;
     }
   }
 

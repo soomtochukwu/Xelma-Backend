@@ -1,11 +1,14 @@
-import { Router, Request, Response } from 'express';
-import roundService from '../services/round.service';
-import resolutionService from '../services/resolution.service';
-import { requireAdmin, requireOracle } from '../middleware/auth.middleware';
-import { adminRoundRateLimiter, oracleResolveRateLimiter } from '../middleware/rateLimiter.middleware';
-import { validate } from '../middleware/validate.middleware';
-import { startRoundSchema, resolveRoundSchema } from '../schemas/rounds.schema';
-import logger from '../utils/logger';
+import { Router, Request, Response } from "express";
+import roundService from "../services/round.service";
+import resolutionService from "../services/resolution.service";
+import { requireAdmin, requireOracle } from "../middleware/auth.middleware";
+import {
+  adminRoundRateLimiter,
+  oracleResolveRateLimiter,
+} from "../middleware/rateLimiter.middleware";
+import { validate } from "../middleware/validate.middleware";
+import { startRoundSchema, resolveRoundSchema } from "../schemas/rounds.schema";
+import logger from "../utils/logger";
 
 const router = Router();
 
@@ -95,35 +98,85 @@ const router = Router();
  *             -H "Authorization: Bearer $TOKEN" \\
  *             -d '{"mode":0,"startPrice":0.1234,"duration":300}'
  */
-router.post('/start', requireAdmin, adminRoundRateLimiter, validate(startRoundSchema), async (req: Request, res: Response) => {
+router.post(
+  "/start",
+  requireAdmin,
+  adminRoundRateLimiter,
+  validate(startRoundSchema),
+  async (req: Request, res: Response) => {
     try {
-        const { mode, startPrice, duration } = req.body;
-        const gameMode = mode === 0 ? 'UP_DOWN' : 'LEGENDS';
-        const round = await roundService.startRound(gameMode, startPrice, duration);
+      const { mode, startPrice, duration } = req.body;
+      const gameMode = mode === 0 ? "UP_DOWN" : "LEGENDS";
+      const round = await roundService.startRound(
+        gameMode,
+        startPrice,
+        duration,
+      );
 
-        res.json({
-            success: true,
-            round: {
-                id: round.id,
-                mode: round.mode,
-                status: round.status,
-                startTime: round.startTime,
-                endTime: round.endTime,
-                startPrice: round.startPrice,
-                sorobanRoundId: round.sorobanRoundId,
-                priceRanges: round.priceRanges,
-            },
-        });
+      res.json({
+        success: true,
+        round: {
+          id: round.id,
+          mode: round.mode,
+          status: round.status,
+          startTime: round.startTime,
+          endTime: round.endTime,
+          startPrice: round.startPrice,
+          sorobanRoundId: round.sorobanRoundId,
+          priceRanges: round.priceRanges,
+        },
+      });
     } catch (error: any) {
-        logger.error('Failed to start round:', error);
-        
-        // Return 409 Conflict if active round already exists
-        if (error.code === 'ACTIVE_ROUND_EXISTS') {
-            return res.status(409).json({ error: error.message });
-        }
-        
-        res.status(500).json({ error: error.message || 'Failed to start round' });
+      logger.error("Failed to start round:", error);
+
+      // Return 409 Conflict if active round already exists
+      if (error.code === "ACTIVE_ROUND_EXISTS") {
+        return res.status(409).json({ error: error.message });
+      }
+
+      res.status(500).json({ error: error.message || "Failed to start round" });
     }
+  },
+);
+
+/**
+ * @swagger
+ * /api/rounds/active:
+ *   get:
+ *     summary: Get active rounds
+ *     tags: [rounds]
+ *     responses:
+ *       200:
+ *         description: Active rounds
+ *         content:
+ *           application/json:
+ *             example:
+ *               success: true
+ *               rounds: []
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             example: { error: "Failed to get active rounds" }
+ *     x-codeSamples:
+ *       - lang: cURL
+ *         source: |
+ *           curl -X GET "$API_BASE_URL/api/rounds/active"
+ */
+router.get("/active", async (req: Request, res: Response) => {
+  try {
+    const rounds = await roundService.getActiveRounds();
+
+    res.json({
+      success: true,
+      rounds,
+    });
+  } catch (error: any) {
+    logger.error("Failed to get active rounds:", error);
+    res
+      .status(500)
+      .json({ error: error.message || "Failed to get active rounds" });
+  }
 });
 
 /**
@@ -161,62 +214,24 @@ router.post('/start', requireAdmin, adminRoundRateLimiter, validate(startRoundSc
  *         source: |
  *           curl -X GET "$API_BASE_URL/api/rounds/round-id"
  */
-router.get('/:id', async (req: Request, res: Response) => {
-    try {
-        const { id } = req.params;
+router.get("/:id", async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
 
-        const round = await roundService.getRound(id);
+    const round = await roundService.getRound(id);
 
-        if (!round) {
-            return res.status(404).json({ error: 'Round not found' });
-        }
-
-        res.json({
-            success: true,
-            round,
-        });
-    } catch (error: any) {
-        logger.error('Failed to get round:', error);
-        res.status(500).json({ error: error.message || 'Failed to get round' });
+    if (!round) {
+      return res.status(404).json({ error: "Round not found" });
     }
-});
 
-/**
- * @swagger
- * /api/rounds/active:
- *   get:
- *     summary: Get active rounds
- *     tags: [rounds]
- *     responses:
- *       200:
- *         description: Active rounds
- *         content:
- *           application/json:
- *             example:
- *               success: true
- *               rounds: []
- *       500:
- *         description: Internal server error
- *         content:
- *           application/json:
- *             example: { error: "Failed to get active rounds" }
- *     x-codeSamples:
- *       - lang: cURL
- *         source: |
- *           curl -X GET "$API_BASE_URL/api/rounds/active"
- */
-router.get('/active', async (req: Request, res: Response) => {
-    try {
-        const rounds = await roundService.getActiveRounds();
-
-        res.json({
-            success: true,
-            rounds,
-        });
-    } catch (error: any) {
-        logger.error('Failed to get active rounds:', error);
-        res.status(500).json({ error: error.message || 'Failed to get active rounds' });
-    }
+    res.json({
+      success: true,
+      round,
+    });
+  } catch (error: any) {
+    logger.error("Failed to get round:", error);
+    res.status(500).json({ error: error.message || "Failed to get round" });
+  }
 });
 
 /**
@@ -293,29 +308,43 @@ router.get('/active', async (req: Request, res: Response) => {
  *             -H "Authorization: Bearer $TOKEN" \\
  *             -d '{"finalPrice":0.2345}'
  */
-router.post('/:id/resolve', requireOracle, oracleResolveRateLimiter, validate(resolveRoundSchema), async (req: Request, res: Response) => {
+router.post(
+  "/:id/resolve",
+  requireOracle,
+  oracleResolveRateLimiter,
+  validate(resolveRoundSchema),
+  async (req: Request, res: Response) => {
     try {
-        const { id } = req.params;
-        const { finalPrice } = req.body;
+      const { id } = req.params;
+      const { finalPrice } = req.body;
 
-        const round = await resolutionService.resolveRound(id, finalPrice);
+      const result = await resolutionService.resolveRound(id, finalPrice);
 
-        res.json({
-            success: true,
-            round: {
-                id: round.id,
-                status: round.status,
-                startPrice: round.startPrice,
-                endPrice: round.endPrice,
-                resolvedAt: round.resolvedAt,
-                predictions: round.predictions.length,
-                winners: round.predictions.filter((p: any) => p.won === true).length,
-            },
-        });
+      if (result.status === "error") {
+        return res.status(400).json({ error: result.error });
+      }
+
+      const { round } = result;
+
+      res.json({
+        success: true,
+        round: {
+          id: round.id,
+          status: round.status,
+          startPrice: round.startPrice,
+          endPrice: round.endPrice,
+          resolvedAt: round.resolvedAt,
+          predictions: round.predictions.length,
+          winners: round.predictions.filter((p: any) => p.won === true).length,
+        },
+      });
     } catch (error: any) {
-        logger.error('Failed to resolve round:', error);
-        res.status(500).json({ error: error.message || 'Failed to resolve round' });
+      logger.error("Failed to resolve round:", error);
+      res
+        .status(500)
+        .json({ error: error.message || "Failed to resolve round" });
     }
-});
+  },
+);
 
 export default router;

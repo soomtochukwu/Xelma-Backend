@@ -266,7 +266,12 @@ describe("RoundSchedulerService", () => {
 
   describe("closeEligibleRounds()", () => {
     beforeEach(() => {
-      (roundService.autoLockExpiredRounds as any).mockResolvedValue(undefined);
+      (roundService.autoLockExpiredRounds as any).mockResolvedValue({
+        processed: 0,
+        locked: 0,
+        skipped: 0,
+        errors: 0,
+      });
       // Default: no expired rounds.
       (prisma.round.count as any).mockResolvedValue(0);
     });
@@ -289,6 +294,12 @@ describe("RoundSchedulerService", () => {
 
     it("queries the DB filtering only ACTIVE status with lte endTime", async () => {
       (prisma.round.count as any).mockResolvedValue(1);
+      (roundService.autoLockExpiredRounds as any).mockResolvedValue({
+        processed: 1,
+        locked: 1,
+        skipped: 0,
+        errors: 0,
+      });
 
       await roundSchedulerService.closeEligibleRounds();
 

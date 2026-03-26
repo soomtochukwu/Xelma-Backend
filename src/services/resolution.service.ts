@@ -25,7 +25,14 @@ export class ResolutionService {
   /**
    * Resolves a round with the final price
    */
-  async resolveRound(roundId: string, finalPrice: number): Promise<any> {
+  async resolveRound(
+    roundId: string,
+    finalPrice: number,
+  ): Promise<{
+    status: "updated" | "already_resolved" | "error";
+    round?: any;
+    error?: string;
+  }> {
     try {
       // Get round
       const round = await prisma.round.findUnique({
@@ -40,15 +47,18 @@ export class ResolutionService {
       });
 
       if (!round) {
-        throw new Error("Round not found");
+        return { status: "error", error: "Round not found" };
       }
 
       if (round.status === "RESOLVED") {
-        throw new Error("Round already resolved");
+        return { status: "already_resolved", round };
       }
 
       if (round.status !== "LOCKED" && round.status !== "ACTIVE") {
-        throw new Error("Round must be locked or active to resolve");
+        return {
+          status: "error",
+          error: "Round must be locked or active to resolve",
+        };
       }
 
       // Mode-specific resolution
@@ -74,13 +84,7 @@ export class ResolutionService {
       // Generate Educational Tip
       // -----------------------------
       try {
-        const tip = await educationTipService.generateTip(roundId);
-
-        logger.info("Educational tip generated for round", {
-          roundId,
-          category: tip.category,
-          message: tip.message,
-        });
+        await educationTipService.generateTip(roundId);
       } catch (tipError) {
         logger.error("Failed to generate educational tip after resolution", {
           roundId,
@@ -89,15 +93,20 @@ export class ResolutionService {
         });
       }
 
-      return await prisma.round.findUnique({
+      const updatedRound = await prisma.round.findUnique({
         where: { id: roundId },
         include: {
           predictions: true,
         },
       });
+
+      return { status: "updated", round: updatedRound };
     } catch (error) {
       logger.error("Failed to resolve round:", error);
-      throw error;
+      return {
+        status: "error",
+        error: error instanceof Error ? error.message : "Unknown error",
+      };
     }
   }
 
