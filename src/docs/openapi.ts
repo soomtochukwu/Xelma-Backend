@@ -164,6 +164,7 @@ export const swaggerSpec = swaggerJSDoc({
       { name: 'education', description: 'Educational guides and tips' },
       { name: 'chat', description: 'Global chat messaging' },
       { name: 'notifications', description: 'User notifications management' },
+      { name: 'Admin', description: 'Administrative and operational endpoints' },
     ],
   },
   apis: [

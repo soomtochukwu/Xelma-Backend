@@ -18,6 +18,7 @@ import { errorHandler } from './middleware/errorHandler.middleware';
 import { metricsMiddleware } from './middleware/metrics.middleware';
 import { requestIdMiddleware } from './middleware/requestId.middleware';
 import metricsRoutes from './routes/metrics.routes';
+import adminMetricsRoutes from './routes/admin-metrics.routes';
 import chatRoutes from "./routes/chat.routes";
 import swaggerUi from 'swagger-ui-express';
 import { swaggerSpec } from './docs/openapi';
@@ -76,6 +77,7 @@ export function createApp(): Express {
   app.use("/api/leaderboard", leaderboardRoutes);
   app.use("/api/chat", chatRoutes);
   app.use("/api/notifications", notificationsRoutes);
+  app.use("/api/admin/metrics", adminMetricsRoutes);
 
   // Prometheus metrics endpoint
   app.use('/metrics', metricsRoutes);

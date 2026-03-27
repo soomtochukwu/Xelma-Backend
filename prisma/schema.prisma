@@ -205,3 +205,17 @@ model Transaction {
   @@index([userId])
   @@index([type])
 }
+
+model RateLimitMetric {
+  id        String   @id @default(uuid())
+  endpoint  String
+  key       String
+  ip        String?
+  userId    String?
+  timestamp DateTime @default(now())
+  
+  @@index([endpoint])
+  @@index([timestamp])
+  @@index([key])
+}
+
