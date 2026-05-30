@@ -242,37 +242,64 @@ interface ServerHandle {
 }
 
 /**
+ * Returns true when the process should run as a stateless API only —
+ * no oracle polling, no cron schedulers, no WebSocket price ticker.
+ * Useful for split deployments where one process owns background work
+ * and others serve HTTP, and for safer local debugging.
+ */
+export function isApiOnlyMode(): boolean {
+  const raw = process.env.API_ONLY;
+  if (!raw) return false;
+  return raw.toLowerCase() === "true";
+}
+
+/**
  * Start background services, bind to a port, and return a handle that
  * can be used to shut everything down cleanly.
+ *
+ * When API_ONLY=true, schedulers, oracle polling, and the WebSocket
+ * price ticker are skipped. The HTTP server (and Socket.IO transport)
+ * still come up, so request-driven endpoints remain available.
  */
 export function startServer(app: Express): ServerHandle {
   const PORT = process.env.PORT || 3000;
   const httpServer = createServer(app);
+  const apiOnly = isApiOnlyMode();
 
   // Initialize Socket.IO with JWT authentication
   initializeSocket(httpServer);
 
-  // Start Oracle Polling
-  priceOracle.startPolling();
+  let priceInterval: NodeJS.Timeout | null = null;
 
-  // Initialize Schedulers
-  schedulerService.start();
-  roundSchedulerService.start();
+  if (apiOnly) {
+    logger.info("API_ONLY=true: skipping oracle polling, schedulers, and WebSocket price ticker");
+  } else {
+    // Start Oracle Polling
+    priceOracle.startPolling();
 
-  // Emit price updates via WebSocket
-  const priceInterval = setInterval(() => {
-    const price = priceOracle.getPriceString();
-    if (price !== null) {
-      websocketService.emitPriceUpdate("XLM", price);
-    }
-  }, 5000);
+    // Initialize Schedulers
+    schedulerService.start();
+    roundSchedulerService.start();
+
+    // Emit price updates via WebSocket
+    priceInterval = setInterval(() => {
+      const price = priceOracle.getPriceString();
+      if (price !== null) {
+        websocketService.emitPriceUpdate("XLM", price);
+      }
+    }, 5000);
+  }
 
   const cleanup = async () => {
     logger.info("Shutting down gracefully...");
-    clearInterval(priceInterval);
-    priceOracle.stopPolling();
-    schedulerService.stop();
-    roundSchedulerService.stop();
+    if (priceInterval) {
+      clearInterval(priceInterval);
+    }
+    if (!apiOnly) {
+      priceOracle.stopPolling();
+      schedulerService.stop();
+      roundSchedulerService.stop();
+    }
     httpServer.close();
     await prisma.$disconnect();
     logger.info("Shutdown complete");

@@ -225,6 +225,12 @@ Xelma-Backend/
   - Locks rounds after 30 seconds (configurable)
   - Controlled by `ROUND_SCHEDULER_ENABLED` environment variable
 
+> **API-only mode**: Set `API_ONLY=true` to start the HTTP server with
+> all schedulers, oracle polling, and the WebSocket price ticker
+> disabled. This is the recommended setup for split deployments — one
+> dedicated worker process runs background jobs while one or more
+> stateless processes serve HTTP — and for safer local debugging.
+
 #### **9. Notification Service (`notification.service.ts`)**
 - **Purpose**: Creates and delivers notifications to users
 - **Types**: WIN, LOSS, ROUND_START, BONUS_AVAILABLE, ANNOUNCEMENT
@@ -431,6 +437,9 @@ SOROBAN_ORACLE_SECRET=S...your-oracle-secret-key
 # Round Scheduler
 ROUND_SCHEDULER_ENABLED=false  # Set to 'true' to enable automated rounds
 ROUND_SCHEDULER_MODE=UP_DOWN   # or 'LEGENDS'
+
+# API-only startup mode (skip oracle polling, schedulers, and price ticker)
+API_ONLY=false  # Set to 'true' to run as a stateless HTTP API only
 
 # Price Oracle Configuration
 ORACLE_POLLING_INTERVAL_MS=10000    # Interval between price updates (ms)
