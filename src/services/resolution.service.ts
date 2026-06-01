@@ -1,10 +1,9 @@
 import sorobanService from './soroban.service';
-import websocketService from './websocket.service';
-import notificationService from './notification.service';
 import logger from '../utils/logger';
 import educationTipService from './education-tip.service';
 import { prisma } from '../lib/prisma';
 import { invalidateNamespace } from '../lib/redis';
+import { OutboxEventType } from '@prisma/client';
 import {
    toDecimal,
    toNumber,
@@ -13,11 +12,9 @@ import {
    decMul,
    decEq,
    decFixed,
-   decGte,
-   decLte,
 } from '../utils/decimal.util';
 import { Decimal } from '@prisma/client/runtime/library';
-import { ValidationError, ErrorCode } from '../utils/errors';
+import { ValidationError } from '../utils/errors';
 import {
    RoundLifecycleOutcome,
    RoundPriceRange,
@@ -274,17 +271,44 @@ export class ResolutionService {
                },
             });
 
-            // Send WIN notification (outside transaction, non-critical)
-            const winNotif = await notificationService.createNotification({
-               userId: prediction.userId,
-               type: 'WIN',
-               title: 'You Won!',
-               message: `Your prediction was correct! You won ${decFixed(payout)} XLM in Round #${round.id.slice(0, 6)}.`,
-               data: { roundId: round.id, amount: toNumber(payout) },
+            // Write WIN notification outbox event atomically with the payout.
+            // The outbox poller will dispatch the notification and websocket
+            // emit after the transaction commits, guaranteeing at-least-once
+            // delivery even if the process crashes mid-resolution.
+            await db.outboxEvent.create({
+               data: {
+                  eventType: OutboxEventType.NOTIFICATION_CREATE,
+                  aggregateId: round.id,
+                  aggregateType: 'round',
+                  payload: {
+                     userId: prediction.userId,
+                     type: 'WIN',
+                     title: 'You Won!',
+                     message: `Your prediction was correct! You won ${decFixed(payout)} XLM in Round #${round.id.slice(0, 6)}.`,
+                     data: { roundId: round.id, amount: toNumber(payout) },
+                  },
+               },
             });
-            if (winNotif) {
-               websocketService.emitNotification(prediction.userId, winNotif);
-            }
+
+            await db.outboxEvent.create({
+               data: {
+                  eventType: OutboxEventType.WEBSOCKET_EMIT,
+                  aggregateId: round.id,
+                  aggregateType: 'round',
+                  payload: {
+                     eventName: 'notification:new',
+                     room: `user:${prediction.userId}`,
+                     userId: prediction.userId,
+                     data: {
+                        type: 'WIN',
+                        title: 'You Won!',
+                        message: `Your prediction was correct! You won ${decFixed(payout)} XLM in Round #${round.id.slice(0, 6)}.`,
+                        data: { roundId: round.id, amount: toNumber(payout) },
+                        isRead: false,
+                     },
+                  },
+               },
+            });
          } else {
             // Loser
             await db.prediction.update({
@@ -302,17 +326,41 @@ export class ResolutionService {
                },
             });
 
-            // Send LOSS notification (outside transaction, non-critical)
-            const lossNotif = await notificationService.createNotification({
-               userId: prediction.userId,
-               type: 'LOSS',
-               title: 'Prediction Did Not Win',
-               message: `Your prediction in Round #${round.id.slice(0, 6)} did not win. Keep trying!`,
-               data: { roundId: round.id },
+            // Write LOSS notification outbox event atomically with the payout.
+            await db.outboxEvent.create({
+               data: {
+                  eventType: OutboxEventType.NOTIFICATION_CREATE,
+                  aggregateId: round.id,
+                  aggregateType: 'round',
+                  payload: {
+                     userId: prediction.userId,
+                     type: 'LOSS',
+                     title: 'Prediction Did Not Win',
+                     message: `Your prediction in Round #${round.id.slice(0, 6)} did not win. Keep trying!`,
+                     data: { roundId: round.id },
+                  },
+               },
             });
-            if (lossNotif) {
-               websocketService.emitNotification(prediction.userId, lossNotif);
-            }
+
+            await db.outboxEvent.create({
+               data: {
+                  eventType: OutboxEventType.WEBSOCKET_EMIT,
+                  aggregateId: round.id,
+                  aggregateType: 'round',
+                  payload: {
+                     eventName: 'notification:new',
+                     room: `user:${prediction.userId}`,
+                     userId: prediction.userId,
+                     data: {
+                        type: 'LOSS',
+                        title: 'Prediction Did Not Win',
+                        message: `Your prediction in Round #${round.id.slice(0, 6)} did not win. Keep trying!`,
+                        data: { roundId: round.id },
+                        isRead: false,
+                     },
+                  },
+               },
+            });
          }
       }
 
@@ -414,6 +462,43 @@ export class ResolutionService {
                   streak: 0,
                },
             });
+
+            // Write LOSS outbox event — winning range existed but had no pool
+            // (no one bet on it), so everyone is a loser.
+            await db.outboxEvent.create({
+               data: {
+                  eventType: OutboxEventType.NOTIFICATION_CREATE,
+                  aggregateId: round.id,
+                  aggregateType: 'round',
+                  payload: {
+                     userId: prediction.userId,
+                     type: 'LOSS',
+                     title: 'Prediction Did Not Win',
+                     message: `Your prediction in Round #${round.id.slice(0, 6)} did not win. Keep trying!`,
+                     data: { roundId: round.id },
+                  },
+               },
+            });
+
+            await db.outboxEvent.create({
+               data: {
+                  eventType: OutboxEventType.WEBSOCKET_EMIT,
+                  aggregateId: round.id,
+                  aggregateType: 'round',
+                  payload: {
+                     eventName: 'notification:new',
+                     room: `user:${prediction.userId}`,
+                     userId: prediction.userId,
+                     data: {
+                        type: 'LOSS',
+                        title: 'Prediction Did Not Win',
+                        message: `Your prediction in Round #${round.id.slice(0, 6)} did not win. Keep trying!`,
+                        data: { roundId: round.id },
+                        isRead: false,
+                     },
+                  },
+               },
+            });
          }
 
          logger.info(
@@ -468,6 +553,42 @@ export class ResolutionService {
                   },
                },
             });
+
+            // Write WIN outbox events atomically with the payout (LEGENDS mode).
+            await db.outboxEvent.create({
+               data: {
+                  eventType: OutboxEventType.NOTIFICATION_CREATE,
+                  aggregateId: round.id,
+                  aggregateType: 'round',
+                  payload: {
+                     userId: prediction.userId,
+                     type: 'WIN',
+                     title: 'You Won!',
+                     message: `Your prediction was correct! You won ${decFixed(payout)} XLM in Round #${round.id.slice(0, 6)}.`,
+                     data: { roundId: round.id, amount: toNumber(payout) },
+                  },
+               },
+            });
+
+            await db.outboxEvent.create({
+               data: {
+                  eventType: OutboxEventType.WEBSOCKET_EMIT,
+                  aggregateId: round.id,
+                  aggregateType: 'round',
+                  payload: {
+                     eventName: 'notification:new',
+                     room: `user:${prediction.userId}`,
+                     userId: prediction.userId,
+                     data: {
+                        type: 'WIN',
+                        title: 'You Won!',
+                        message: `Your prediction was correct! You won ${decFixed(payout)} XLM in Round #${round.id.slice(0, 6)}.`,
+                        data: { roundId: round.id, amount: toNumber(payout) },
+                        isRead: false,
+                     },
+                  },
+               },
+            });
          } else {
             // Loser
             await db.prediction.update({
@@ -482,6 +603,42 @@ export class ResolutionService {
                where: { id: prediction.userId },
                data: {
                   streak: 0,
+               },
+            });
+
+            // Write LOSS outbox events atomically with the payout (LEGENDS mode).
+            await db.outboxEvent.create({
+               data: {
+                  eventType: OutboxEventType.NOTIFICATION_CREATE,
+                  aggregateId: round.id,
+                  aggregateType: 'round',
+                  payload: {
+                     userId: prediction.userId,
+                     type: 'LOSS',
+                     title: 'Prediction Did Not Win',
+                     message: `Your prediction in Round #${round.id.slice(0, 6)} did not win. Keep trying!`,
+                     data: { roundId: round.id },
+                  },
+               },
+            });
+
+            await db.outboxEvent.create({
+               data: {
+                  eventType: OutboxEventType.WEBSOCKET_EMIT,
+                  aggregateId: round.id,
+                  aggregateType: 'round',
+                  payload: {
+                     eventName: 'notification:new',
+                     room: `user:${prediction.userId}`,
+                     userId: prediction.userId,
+                     data: {
+                        type: 'LOSS',
+                        title: 'Prediction Did Not Win',
+                        message: `Your prediction in Round #${round.id.slice(0, 6)} did not win. Keep trying!`,
+                        data: { roundId: round.id },
+                        isRead: false,
+                     },
+                  },
                },
             });
          }

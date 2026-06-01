@@ -7,6 +7,9 @@ import logger from '../utils/logger';
 import { withDistributedLock } from '../utils/distributed-lock';
 import { prisma } from '../lib/prisma';
 import { RoundLifecycleOutcome } from '../types/round.types';
+import outboxService, { getOutboxPollIntervalSeconds } from './outbox.service';
+import websocketService from './websocket.service';
+import type { OutboxDispatchHandlers } from './outbox.service';
 
 class SchedulerService {
    private cronTasks: ScheduledTask[] = [];
@@ -49,6 +52,27 @@ class SchedulerService {
       this.cronTasks.push(
          cron.schedule('0 3 * * *', async () => {
             await this.runRetentionPolicies();
+         })
+      );
+
+      // Outbox poller — runs every OUTBOX_POLL_INTERVAL_SECONDS (default 10s).
+      // Dispatches PENDING outbox events written atomically with business
+      // transactions (Issue #18). Runs regardless of API_ONLY mode because
+      // the outbox must drain even in split-deployment setups.
+      const outboxIntervalSeconds = getOutboxPollIntervalSeconds();
+      const outboxCron = `*/${outboxIntervalSeconds} * * * * *`;
+      logger.info(`Starting outbox poller (interval: ${outboxIntervalSeconds}s)`);
+      this.cronTasks.push(
+         cron.schedule(outboxCron, async () => {
+            await this.pollOutbox();
+         })
+      );
+
+      // Outbox cleanup — runs daily at 3:30 AM alongside retention jobs.
+      logger.info('Starting outbox cleanup scheduler (daily at 3:30 AM)');
+      this.cronTasks.push(
+         cron.schedule('30 3 * * *', async () => {
+            await this.cleanupOutbox();
          })
       );
 
@@ -243,6 +267,71 @@ class SchedulerService {
          logger.info(`Retention policy execution completed: ${summary}`);
       } catch (error) {
          logger.error('Error in retention policy scheduler:', error);
+      }
+   }
+
+   /**
+    * Build the dispatch handlers used by the outbox poller.
+    * Kept here (not in outbox.service) to avoid a circular import:
+    * outbox.service → notification.service → (no cycle)
+    * outbox.service → websocket.service → (no cycle)
+    * scheduler.service already imports both, so wiring happens here.
+    */
+   private buildOutboxHandlers(): OutboxDispatchHandlers {
+      return {
+         notificationCreate: async (payload) => {
+            return notificationService.createNotificationForRetry(payload);
+         },
+         websocketEmit: ({ eventName, room, data }) => {
+            websocketService.replayEmit(eventName, { room, data });
+         },
+      };
+   }
+
+   /**
+    * Poll the outbox for PENDING events and dispatch them.
+    * Protected by a distributed lock so only one instance runs per interval.
+    * @visibleForTesting
+    */
+   async pollOutbox(): Promise<void> {
+      await withDistributedLock(
+         'outbox-poll',
+         () => this.pollOutboxInternal(),
+         { ttlSeconds: getOutboxPollIntervalSeconds() + 5 }
+      );
+   }
+
+   private async pollOutboxInternal(): Promise<void> {
+      try {
+         const result = await outboxService.processOutbox(this.buildOutboxHandlers());
+         if (result.processed > 0 || result.failed > 0) {
+            logger.info('Outbox poll completed', result);
+         }
+      } catch (error) {
+         logger.error('Error in outbox poller:', error);
+      }
+   }
+
+   /**
+    * Delete old PROCESSED outbox rows.
+    * @visibleForTesting
+    */
+   async cleanupOutbox(): Promise<void> {
+      await withDistributedLock(
+         'outbox-cleanup',
+         () => this.cleanupOutboxInternal(),
+         { ttlSeconds: 60 }
+      );
+   }
+
+   private async cleanupOutboxInternal(): Promise<void> {
+      try {
+         const count = await outboxService.cleanupProcessed();
+         if (count > 0) {
+            logger.info(`Outbox cleanup: removed ${count} processed event(s)`);
+         }
+      } catch (error) {
+         logger.error('Error in outbox cleanup scheduler:', error);
       }
    }
 }

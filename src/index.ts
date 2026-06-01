@@ -301,8 +301,13 @@ export async function startServer(app: Express): Promise<ServerHandle> {
 
    if (apiOnly) {
       logger.info(
-         'API_ONLY=true: skipping oracle polling, schedulers, and WebSocket price ticker'
+         'API_ONLY=true: skipping oracle polling, round scheduler, and WebSocket price ticker. Outbox poller and retention jobs still run.'
       );
+      // The general scheduler (outbox poller, notification cleanup, retention)
+      // must run even in API_ONLY mode so outbox events written by this process
+      // are dispatched. Only oracle polling, round scheduling, and the price
+      // ticker are skipped.
+      schedulerService.start();
    } else {
       // Start Oracle Polling
       priceOracle.startPolling();
@@ -327,9 +332,10 @@ export async function startServer(app: Express): Promise<ServerHandle> {
       }
       if (!apiOnly) {
          priceOracle.stopPolling();
-         schedulerService.stop();
          roundSchedulerService.stop();
       }
+      // Always stop the general scheduler (outbox poller, cleanup jobs)
+      schedulerService.stop();
       httpServer.close();
       await prisma.$disconnect();
       logger.info('Shutdown complete');

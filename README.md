@@ -58,6 +58,8 @@ The platform supports two game modes:
 - ✅ **WebSocket Support**: Live updates for prices, rounds, chat, and notifications
 - ✅ **Leaderboard System**: Tracks wins, earnings, and streaks across game modes
 - ✅ **Automated Schedulers**: Cron jobs for round creation, locking, and resolution
+- ✅ **Transactional Outbox**: Notification and WebSocket side-effects are written atomically with DB commits — guaranteed at-least-once delivery even across process crashes
+- ✅ **Dead-Letter Queue**: Failed dispatches are persisted and replayable via admin endpoints
 - ✅ **OpenAPI Documentation**: Auto-generated Swagger UI at `/api-docs`
 - ✅ **Rate Limiting**: Protects endpoints from abuse
 - ✅ **Comprehensive Logging**: Winston-based logging for debugging and monitoring
@@ -207,6 +209,12 @@ Xelma-Backend/
   - Current win streak
   - Accuracy percentage
 - **Queries**: Optimized database queries with pagination support
+- **Materialized sorted set**: When Redis is available, a Redis sorted set
+  (`ZSET`) stores every user's `totalEarnings` as the score. Rank lookups
+  become O(log N) instead of a full-table `COUNT(*)`. The set is kept in sync
+  after every `updateUserStatsForRound` call and invalidated whenever the
+  leaderboard namespace is flushed. The DB path is always the fallback when
+  Redis is unavailable.
 
 #### **7. WebSocket Service (`websocket.service.ts`)**
 - **Purpose**: Broadcasts real-time events to connected clients
@@ -230,6 +238,15 @@ Xelma-Backend/
 > disabled. This is the recommended setup for split deployments — one
 > dedicated worker process runs background jobs while one or more
 > stateless processes serve HTTP — and for safer local debugging.
+
+#### **8a. Outbox Service (`outbox.service.ts`)** — Issue #18
+- **Purpose**: Guarantees at-least-once delivery of notification and WebSocket side-effects
+- **How it works**:
+  1. Business transactions (payout, prediction) write `OutboxEvent` rows *inside* the same `prisma.$transaction()` call — atomically with the state change.
+  2. A background poller (cron, every `OUTBOX_POLL_INTERVAL_SECONDS`) reads `PENDING` rows and dispatches them.
+  3. On success the row is marked `PROCESSED`. On failure `attempts` is incremented; once `OUTBOX_MAX_ATTEMPTS` is reached the row is marked `FAILED` and escalated to the existing DLQ.
+- **Why this matters**: Before this change, notifications fired *after* the transaction committed. A process crash between commit and notification call silently dropped the event. Now the event is durable from the moment the transaction commits.
+- **Env vars**: `OUTBOX_POLL_INTERVAL_SECONDS`, `OUTBOX_BATCH_SIZE`, `OUTBOX_MAX_ATTEMPTS`, `OUTBOX_RETENTION_DAYS`
 
 #### **9. Notification Service (`notification.service.ts`)**
 - **Purpose**: Creates and delivers notifications to users
@@ -484,6 +501,29 @@ Prisma’s Postgres connector reads pool/timeouts via connection string query pa
 - **PgBouncer**: if your stack uses PgBouncer in *transaction pooling* mode, set `DB_PGBOUNCER=true`.
 - **Visibility**: scrape `/metrics` and look for `db_pool_settings_info` to see the effective values.
 - **Validation**: invalid values are rejected at startup via config validation.
+
+#### Leaderboard cache tuning
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `LEADERBOARD_CACHE_TTL_SECONDS` | TTL for the per-page JSON cache entry. | `60` |
+| `LEADERBOARD_ZSET_TTL_SECONDS` | Safety-net TTL for the materialized sorted set. `0` disables automatic expiry; the set is invalidated explicitly after every round resolution. | `300` |
+
+The leaderboard uses a two-layer caching strategy:
+
+1. **Materialized sorted set (ZSET)** — Redis sorted set keyed by `totalEarnings`. Rank lookups are O(log N) instead of a full-table `COUNT(*)`. The set is updated after every `updateUserStatsForRound` call and flushed whenever the `leaderboard` namespace is invalidated.
+2. **Versioned JSON page cache** — The assembled leaderboard page (with wallet masking, accuracy, mode stats) is stored in the existing versioned namespace cache with a short TTL. This avoids re-fetching `UserStats` rows on every HTTP request.
+
+When Redis is unavailable both layers degrade gracefully to direct DB queries.
+
+#### Transactional outbox tuning (Issue #18)
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `OUTBOX_POLL_INTERVAL_SECONDS` | How often the outbox poller runs. | `10` |
+| `OUTBOX_BATCH_SIZE` | Rows processed per poll cycle (max 500). | `50` |
+| `OUTBOX_MAX_ATTEMPTS` | Dispatch attempts before a row is marked `FAILED` and escalated to the DLQ. | `3` |
+| `OUTBOX_RETENTION_DAYS` | Days to keep `PROCESSED` rows before cleanup. | `7` |
 
 ### 3. Set Up Database
 

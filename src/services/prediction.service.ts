@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { OutboxEventType } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { invalidateNamespace } from '../lib/redis';
 import { UserPriceRange } from '../types/round.types';
@@ -199,6 +200,29 @@ export class PredictionService {
                // This is our rollback strategy: DB transaction will only commit if placeBet succeeds.
                await sorobanService.placeBet(user.walletAddress, amount, side!);
 
+               // 9. Write prediction:placed websocket outbox event atomically with the
+               // prediction row. The outbox poller dispatches it after commit so the
+               // event is never lost if the process crashes between the transaction
+               // commit and an in-process emit call.
+               await tx.outboxEvent.create({
+                  data: {
+                     eventType: OutboxEventType.WEBSOCKET_EMIT,
+                     aggregateId: prediction.id,
+                     aggregateType: 'prediction',
+                     payload: {
+                        eventName: 'prediction:placed',
+                        room: 'round',
+                        data: {
+                           roundId,
+                           predictionId: prediction.id,
+                           amount: toNumber(prediction.amount),
+                           side: prediction.side,
+                           priceRange: prediction.priceRange,
+                        },
+                     },
+                  },
+               });
+
                logger.info(
                   `Prediction submitted (UP_DOWN): user=${userId}, round=${roundId}, side=${side}`
                );
@@ -216,6 +240,27 @@ export class PredictionService {
                   data: {
                      priceRanges:
                         updatedRanges as unknown as Prisma.InputJsonValue,
+                  },
+               });
+
+               // Write prediction:placed websocket outbox event atomically with the
+               // prediction row for LEGENDS mode.
+               await tx.outboxEvent.create({
+                  data: {
+                     eventType: OutboxEventType.WEBSOCKET_EMIT,
+                     aggregateId: prediction.id,
+                     aggregateType: 'prediction',
+                     payload: {
+                        eventName: 'prediction:placed',
+                        room: 'round',
+                        data: {
+                           roundId,
+                           predictionId: prediction.id,
+                           amount: toNumber(prediction.amount),
+                           side: prediction.side,
+                           priceRange: prediction.priceRange,
+                        },
+                     },
                   },
                });
 

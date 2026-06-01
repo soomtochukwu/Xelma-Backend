@@ -63,6 +63,25 @@ enum DispatchStatus {
   ABANDONED
 }
 
+/// Outbox event type — mirrors DispatchChannel but lives on the outbox
+/// model so the two concerns (outbox vs. DLQ) stay independent.
+enum OutboxEventType {
+  NOTIFICATION_CREATE
+  WEBSOCKET_EMIT
+}
+
+/// Outbox event status lifecycle:
+///   PENDING   → picked up by the poller
+///   PROCESSING → poller is actively dispatching (prevents double-dispatch)
+///   PROCESSED  → successfully dispatched; eligible for cleanup
+///   FAILED     → all retry attempts exhausted; escalated to DLQ
+enum OutboxEventStatus {
+  PENDING
+  PROCESSING
+  PROCESSED
+  FAILED
+}
+
 // =======================
 // Models
 // =======================
@@ -274,6 +293,43 @@ model FailedDispatch {
   @@index([status])
   @@index([createdAt])
   @@index([userId])
+}
+
+/// Transactional outbox for notification and websocket side-effects (Issue #18).
+///
+/// Every row is written *inside* the same Prisma transaction that commits
+/// the business state change (payout, prediction, etc.). A background poller
+/// reads PENDING rows and dispatches them, then marks them PROCESSED.
+/// If dispatch fails after MAX_OUTBOX_ATTEMPTS the row is marked FAILED and
+/// escalated to the FailedDispatch DLQ for operator review.
+///
+/// This guarantees at-least-once delivery: a side-effect can never be
+/// silently dropped because the process crashed between the DB commit and
+/// the in-process notification call.
+///
+/// Storage notes:
+///   - `aggregateId` is the business entity id (roundId, predictionId, …).
+///   - `aggregateType` is a short label ("round", "prediction", …).
+///   - `payload` is the full data needed to reconstruct the dispatch.
+///   - `attempts` starts at 0 and is incremented on each dispatch attempt.
+///   - `processedAt` is set when status transitions to PROCESSED.
+///   - Rows older than OUTBOX_RETENTION_DAYS (default 7) can be deleted.
+model OutboxEvent {
+  id            String            @id @default(uuid())
+  eventType     OutboxEventType
+  aggregateId   String
+  aggregateType String
+  payload       Json
+  status        OutboxEventStatus @default(PENDING)
+  attempts      Int               @default(0)
+  lastError     String?           @db.VarChar(1000)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  processedAt   DateTime?
+
+  @@index([status, createdAt])
+  @@index([aggregateId])
+  @@index([eventType])
 }
 
 model RateLimitMetric {
