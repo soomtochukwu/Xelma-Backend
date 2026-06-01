@@ -142,6 +142,7 @@ export class ResolutionService {
 
          // Invalidate leaderboard after transaction commits
          void invalidateNamespace('leaderboard');
+         void invalidateLeaderboardSortedSet();
 
          if (result?.outcome === RoundLifecycleOutcome.UPDATED && result.round) {
             roundsResolvedTotal.inc({ mode: result.round.mode });
